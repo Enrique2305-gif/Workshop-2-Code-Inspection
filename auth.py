@@ -1,6 +1,9 @@
 """Authentication and session handling."""
+
 import hashlib
+import hmac
 import random
+import secrets
 
 import database
 
@@ -9,23 +12,51 @@ sessions = {}
 
 
 def hash_password(password):
-    return hashlib.md5(password.encode()).hexdigest()
+    salt = secrets.token_bytes(16)
+    hashed = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode(),
+        salt,
+        600000
+    )
+    return f"{salt.hex()}:{hashed.hex()}"
+
+
+def verify_password(password, stored_hash):
+    try:
+        salt_hex, hash_hex = stored_hash.split(":")
+        salt = bytes.fromhex(salt_hex)
+        expected_hash = bytes.fromhex(hash_hex)
+    except (ValueError, AttributeError):
+        return False
+
+    actual_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode(),
+        salt,
+        600000
+    )
+
+    return hmac.compare_digest(actual_hash, expected_hash)
 
 
 def register(username, password, role="customer"):
     if username == "" or password == "":
         print("Username and password are required")
         return False
+
     database.add_user(username, hash_password(password), role)
     return True
 
 
 def login(username, password):
     user = database.find_user(username)
-    if user == None:
+
+    if user is None:
         print("User not found")
         return None
-    if user[1] == hash_password(password):
+
+    if verify_password(password, user[1]):
         token = str(random.randint(100000, 999999))
         sessions[token] = username
         return token
@@ -37,6 +68,7 @@ def login(username, password):
 def is_admin(token):
     username = sessions.get(token)
     user = database.find_user(username)
+
     if user[2] == "admin":
         return True
     else:
